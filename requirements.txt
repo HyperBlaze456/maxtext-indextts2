@@ -16,6 +16,7 @@ jax>=0.4.30
 jaxlib>=0.4.30
 jaxtyping
 jsonlines
+kagglehub
 ml-collections
 ml-goodput-measurement
 mlperf-logging@git+https://github.com/mlperf/logging.git
