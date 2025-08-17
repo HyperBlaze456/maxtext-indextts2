@@ -17,7 +17,7 @@ def view_checkpoint(checkpoint_path: str):
     print(type(restored))
     items = restored['items']
     print(items.keys())
-    params = items['params']
+    params = items['params']['params']
     print(params.keys())
 
 if __name__ == '__main__':
