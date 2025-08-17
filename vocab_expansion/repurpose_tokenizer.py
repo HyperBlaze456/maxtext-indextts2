@@ -1,170 +1,187 @@
 #!/usr/bin/env python3
 """
-Clean script to repurpose Gemma's unused tokens as audio tokens.
+Repurpose Gemma's <unused*> tokens by aliasing them to <AUDIO_i> (no SPM edits),
+and append additional <AUDIO_*> tokens at the end of the vocab.
 
-Token allocation:
-- 6242 existing unused tokens -> <AUDIO_0> to <AUDIO_6241>
-- 1950 new tokens -> <AUDIO_6242> to <AUDIO_8191>
-- 98 new tokens -> <unused0> to <unused97>
+- We DO NOT rename existing tokens inside the SentencePiece model.
+- We DO create `audio_alias_map.json` that maps <AUDIO_i> <-> <unusedi>.
+- We DO append `--append-count` new <AUDIO_*> tokens using add_special_tokens,
+  starting from the first index AFTER the aliased range.
+- We ensure no name collisions with existing tokens.
 
-Total: 8192 audio tokens + 98 replacement unused tokens
+Usage:
+  python repurpose_audio_tokens.py \
+      --base-model google/gemma-3-4b \
+      --output-dir ./gemma3-audio-tokenizer \
+      --append-count 2048
 """
 
+import argparse
 import json
+import re
 from pathlib import Path
+from typing import Dict, List, Tuple
+
 from transformers import AutoTokenizer
 
 
-# Fixed mapping of unused token IDs in Gemma tokenizer
-# These are hardcoded based on Gemma's tokenizer structure
-UNUSED_TOKEN_IDS = {}
+UNUSED_RE = re.compile(r"^<unused(\d+)>$")
 
-# First range: <unused0> to <unused98> have IDs 6 to 104
-for i in range(99):
-    UNUSED_TOKEN_IDS[f"<unused{i}>"] = 6 + i
 
-# Second range: <unused99> to <unused6241> have IDs 256001 to 262143  
-for i in range(99, 6242):
-    UNUSED_TOKEN_IDS[f"<unused{i}>"] = 256001 + (i - 99)
+def find_contiguous_unused(tokenizer) -> Tuple[List[str], Dict[str, int]]:
+    """
+    Return the contiguous sequence <unused0>, <unused1>, ... as they exist in the vocab.
+    Stops at the first missing index. Also returns their ids.
+    """
+    vocab = tokenizer.get_vocab()
+    names, ids = [], {}
+    i = 0
+    while True:
+        name = f"<unused{i}>"
+        if name in vocab:
+            names.append(name)
+            ids[name] = vocab[name]
+            i += 1
+        else:
+            break
+    return names, ids
+
+
+def collect_all_unused(tokenizer) -> List[Tuple[int, str]]:
+    """
+    Collect all <unusedN> present (not necessarily contiguous) as (N, token_str), sorted by N.
+    Useful for diagnostics; not used for aliasing.
+    """
+    out = []
+    for tok in tokenizer.get_vocab().keys():
+        m = UNUSED_RE.match(tok)
+        if m:
+            out.append((int(m.group(1)), tok))
+    return sorted(out, key=lambda x: x[0])
+
+
+def build_alias_map(unused_names: List[str]) -> Dict[str, str]:
+    """
+    Build <AUDIO_i> -> <unusedi> alias for the contiguous block.
+    """
+    return {f"<AUDIO_{i}>": f"<unused{i}>" for i in range(len(unused_names))}
+
+
+def append_new_audio_tokens(tokenizer, start_index: int, count: int) -> List[str]:
+    """
+    Append <AUDIO_start_index> ... <AUDIO_{start_index+count-1}> as additional special tokens,
+    skipping any that already exist in the vocab to avoid collisions.
+    """
+    candidates = [f"<AUDIO_{i}>" for i in range(start_index, start_index + count)]
+    existing = set(tokenizer.get_vocab().keys())
+    new_tokens = [t for t in candidates if t not in existing]
+    if new_tokens:
+        tokenizer.add_special_tokens({"additional_special_tokens": new_tokens})
+    return new_tokens
 
 
 def repurpose_tokenizer(
-    base_model: str = "google/gemma-3-4b",
-    output_dir: str = "./gemma3-audio-tokenizer"
+    base_model: str,
+    output_dir: str,
+    append_count: int = 2048,
 ):
-    """Repurpose unused tokens and add new tokens for audio.
-    
-    Args:
-        base_model: Base Gemma model name
-        output_dir: Directory to save modified tokenizer
-    """
-    print("Loading Gemma tokenizer...")
-    tokenizer = AutoTokenizer.from_pretrained(base_model)
-    original_vocab_size = len(tokenizer)
-    print(f"Original vocabulary size: {original_vocab_size}")
-    
-    # Step 1: Verify unused tokens exist and get their IDs
-    print("\nVerifying unused tokens...")
-    vocab = tokenizer.get_vocab()
-    verified_unused = {}
-    
-    for token_name, expected_id in UNUSED_TOKEN_IDS.items():
-        if token_name in vocab:
-            actual_id = vocab[token_name]
-            if actual_id != expected_id:
-                print(f"  WARNING: {token_name} has ID {actual_id}, expected {expected_id}")
-            verified_unused[token_name] = actual_id
-        else:
-            print(f"  ERROR: {token_name} not found in vocabulary")
-    
-    print(f"Found {len(verified_unused)} unused tokens to repurpose")
-    
-    # Step 2: Create mappings
-    # Map old unused tokens to audio tokens
-    token_remapping = {}
-    for i, (unused_token, token_id) in enumerate(verified_unused.items()):
-        audio_token = f"<AUDIO_{i}>"
-        token_remapping[unused_token] = audio_token
-    
-    # Step 3: Modify tokenizer vocabulary
-    # This is done by manipulating the tokenizer's internal structures
-    # Note: This approach works for SentencePiece tokenizers (like Gemma)
-    
-    # Get the tokenizer's vocabulary as a dict
-    vocab = tokenizer.get_vocab()
-    
-    # Create new vocabulary with renamed tokens
-    new_vocab = {}
-    for token, token_id in vocab.items():
-        if token in token_remapping:
-            # Rename unused token to audio token
-            new_vocab[token_remapping[token]] = token_id
-        else:
-            new_vocab[token] = token_id
-    
-    # Step 4: Add new tokens
-    # Add 1950 new audio tokens
-    new_audio_tokens = []
-    for i in range(6242, 8192):  # 6242 to 8191
-        new_audio_tokens.append(f"<AUDIO_{i}>")
-    
-    # Add 98 new unused tokens
-    new_unused_tokens = []
-    for i in range(98):
-        new_unused_tokens.append(f"<unused{i}>")
-    
-    # Add all new tokens
-    all_new_tokens = new_audio_tokens + new_unused_tokens
-    print(f"\nAdding {len(all_new_tokens)} new tokens...")
-    
-    # For Gemma/SentencePiece, we need to add these as special tokens
-    special_tokens_dict = {"additional_special_tokens": all_new_tokens}
-    num_added = tokenizer.add_special_tokens(special_tokens_dict)
-    
-    print(f"Added {num_added} new tokens")
-    print(f"New vocabulary size: {len(tokenizer)}")
-    
-    # Step 5: Save the modified tokenizer
-    output_path = Path(output_dir)
-    output_path.mkdir(parents=True, exist_ok=True)
-    tokenizer.save_pretrained(output_dir)
-    print(f"\nSaved modified tokenizer to {output_dir}")
-    
-    # Step 6: Save metadata
+    print(f"Loading tokenizer: {base_model}")
+    tok = AutoTokenizer.from_pretrained(base_model)
+    original_vocab_size = len(tok)
+    print(f"Original vocab size: {original_vocab_size}")
+
+    # 1) Discover contiguous <unused0..K-1>
+    contiguous_unused, contiguous_ids = find_contiguous_unused(tok)
+    if not contiguous_unused:
+        raise RuntimeError("No <unused*> tokens found; cannot build alias map.")
+
+    # (Diagnostics) how many unused in total (any indices)
+    all_unused = collect_all_unused(tok)
+    print(f"Contiguous <unused0..{len(contiguous_unused)-1}> count: {len(contiguous_unused)}")
+    if len(all_unused) != len(contiguous_unused):
+        print(f"Note: Found {len(all_unused)} total <unusedN> entries (non-contiguous as well).")
+
+    # 2) Build alias map <AUDIO_i> -> <unusedi> for contiguous block only
+    alias_map = build_alias_map(contiguous_unused)  # e.g., {"<AUDIO_0>":"<unused0>", ...}
+
+    # 3) Append new <AUDIO_*> tokens AFTER the aliased range
+    start_new = len(contiguous_unused)
+    print(f"Appending {append_count} new audio tokens starting from index {start_new}...")
+    newly_added = append_new_audio_tokens(tok, start_new, append_count)
+    print(f"Actually added {len(newly_added)} new tokens (skipped any that already existed).")
+    new_vocab_size = len(tok)
+    print(f"New vocab size: {new_vocab_size}")
+
+    # 4) Save tokenizer
+    outdir = Path(output_dir)
+    outdir.mkdir(parents=True, exist_ok=True)
+    tok.save_pretrained(outdir)
+    print(f"Saved tokenizer to: {outdir}")
+
+    # 5) Save alias map JSON (easy to load elsewhere)
+    # Also include reverse map and useful ID lookups.
+    reverse_alias = {v: k for k, v in alias_map.items()}  # <unusedi> -> <AUDIO_i>
+
+    # Map known <unusedi> piece IDs for convenience
+    audio_to_existing_id = {
+        audio: contiguous_ids[unused] for audio, unused in alias_map.items()
+    }
+
+    # IDs for newly added <AUDIO_*> tokens
+    new_audio_token_ids = {
+        t: tok.convert_tokens_to_ids(t) for t in newly_added
+    }
+
+    alias_payload = {
+        "base_model": base_model,
+        "alias_count": len(alias_map),
+        "append_count_requested": append_count,
+        "append_count_added": len(newly_added),
+        "audio_to_unused": alias_map,
+        "unused_to_audio": reverse_alias,
+        "audio_to_existing_id": audio_to_existing_id,
+        "new_audio_token_ids": new_audio_token_ids,
+    }
+    (outdir / "audio_alias_map.json").write_text(json.dumps(alias_payload, indent=2), encoding="utf-8")
+    print(f"Wrote alias map: {outdir / 'audio_alias_map.json'}")
+
+    # 6) Save compact metadata
     metadata = {
         "original_vocab_size": original_vocab_size,
-        "new_vocab_size": len(tokenizer),
-        "num_audio_tokens": 8192,
-        "num_unused_tokens": 98,
-        "repurposed_tokens": len(verified_unused),
-        "added_tokens": num_added,
-        "audio_token_ranges": [
-            {"start": 0, "end": 6241, "type": "repurposed", "count": 6242},
-            {"start": 6242, "end": 8191, "type": "new", "count": 1950}
-        ],
-        "unused_token_ids": list(UNUSED_TOKEN_IDS.values()),
-        "first_new_token_id": original_vocab_size,
-        "last_new_token_id": len(tokenizer) - 1
+        "new_vocab_size": new_vocab_size,
+        "repurposed_audio_count": len(alias_map),
+        "appended_audio_count": len(newly_added),
+        "first_appended_audio": newly_added[0] if newly_added else None,
+        "last_appended_audio": newly_added[-1] if newly_added else None,
     }
-    
-    metadata_path = output_path / "audio_token_metadata.json"
-    with open(metadata_path, 'w') as f:
-        json.dump(metadata, f, indent=2)
-    print(f"Saved metadata to {metadata_path}")
-    
-    # Step 7: Verify the conversion
-    print("\n" + "="*60)
-    print("Verification:")
-    print("="*60)
-    
-    # Check some audio tokens
-    test_audio_tokens = ["<AUDIO_0>", "<AUDIO_100>", "<AUDIO_6241>", "<AUDIO_6242>", "<AUDIO_8191>"]
-    for token in test_audio_tokens:
-        if tokenizer.convert_tokens_to_ids([token])[0] != tokenizer.unk_token_id:
-            token_id = tokenizer.convert_tokens_to_ids([token])[0]
-            print(f"  ✓ {token:15} -> ID {token_id}")
+    (outdir / "audio_token_metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    print(f"Wrote metadata: {outdir / 'audio_token_metadata.json'}")
+
+    # 7) Quick verification prints
+    probe = [
+        "<AUDIO_0>",
+        f"<AUDIO_{min(100, len(alias_map)-1)}>",
+        f"<AUDIO_{len(alias_map)-1}>",     # last aliased
+        f"<AUDIO_{len(alias_map)}>",       # first appended
+        f"<AUDIO_{len(alias_map)+append_count-1}>",  # last intended appended
+    ]
+    print("\nVerification:")
+    for t in probe:
+        tid = tok.convert_tokens_to_ids(t)
+        if tid == tok.unk_token_id:
+            print(f"  ✗ {t:>15}: not in tokenizer (expected for aliased entries; use alias map).")
         else:
-            print(f"  ✗ {token:15} not found")
-    
-    # Check new unused tokens
-    test_unused = ["<unused0>", "<unused50>", "<unused97>"]
-    for token in test_unused:
-        if tokenizer.convert_tokens_to_ids([token])[0] != tokenizer.unk_token_id:
-            token_id = tokenizer.convert_tokens_to_ids([token])[0]
-            print(f"  ✓ {token:15} -> ID {token_id}")
-        else:
-            print(f"  ✗ {token:15} not found")
-    
-    print("\nConversion complete!")
-    return tokenizer, metadata
+            print(f"  ✓ {t:>15}: id={tid}")
+
+    print("\nDone.")
+    return tok, alias_payload, metadata
 
 
 if __name__ == "__main__":
-    import argparse
-    
-    parser = argparse.ArgumentParser(description="Repurpose Gemma unused tokens for audio")
-    parser.add_argument("--base-model", default="google/gemma-2-2b", help="Base model name")
-    parser.add_argument("--output-dir", default="./gemma3-audio-tokenizer", help="Output directory")
-    
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--base-model", default="google/gemma-3-4b")
+    parser.add_argument("--output-dir", default="./gemma3-audio-tokenizer")
+    parser.add_argument("--append-count", type=int, default=2048,
+                        help="How many new <AUDIO_*> tokens to append after the aliased range.")
     args = parser.parse_args()
-    repurpose_tokenizer(args.base_model, args.output_dir)
+    repurpose_tokenizer(args.base_model, args.output_dir, append_count=args.append_count)
