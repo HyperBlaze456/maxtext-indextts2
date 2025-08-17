@@ -20,8 +20,10 @@ def view_checkpoint(checkpoint_path: str):
     params = items['params']['params']
     print(params.keys())
 
-    embedding = params['token_embedder']
-    print(embedding.shape)
+    embedder = params['token_embedder']
+    print(embedder.keys())
+    embeddings = embedder['embedding']
+    print(embeddings.shape)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Minimum model overview")
