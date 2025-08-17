@@ -15,8 +15,10 @@ def view_checkpoint(checkpoint_path: str):
 
     restored = manager.restore(0)
     print(type(restored))
-
-    print(restored['items'])
+    items = restored['items']
+    print(items.keys())
+    params = items['params']
+    print(params.keys())
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Minimum model overview")
