@@ -4,7 +4,7 @@ Expand Gemma 3 (MaxText-converted) token embeddings to match a repurposed tokeni
 that appended new tokens (e.g., +2048 <AUDIO_*>), and initialize the new rows.
 
 Usage:
-  python expand_gemma3_embedder.py \
+  python expand_embedder.py \
       --checkpoint-path /path/to/converted_gemma3_ckpt \
       --tokenizer-dir ./gemma3-audio-tokenizer \
       --in-step 0 --out-step 1 \
