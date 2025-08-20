@@ -28,8 +28,13 @@ from typing import Any, Dict, Tuple, List
 
 import jax
 import jax.numpy as jnp
+from flax.training import train_state
 
 from MaxText import checkpointing
+from MaxText import max_logging
+
+# Run on CPU for checkpoint manipulation
+jax.config.update("jax_platform_name", "cpu")
 
 
 def _trunc_normal(key, shape, std, dtype):
@@ -83,8 +88,13 @@ def expand_checkpoint_embeddings(
 
     # --- Restore checkpoint ---
     print(f"[Checkpoint] Restoring from {checkpoint_path}, step={in_step}")
+    # Create manager with proper settings for loading and saving
+    enable_checkpointing = True
+    async_checkpointing = False
+    save_interval_steps = 1
+    
     manager = checkpointing.create_orbax_checkpoint_manager(
-        checkpoint_path, True, False, 1
+        checkpoint_path, enable_checkpointing, async_checkpointing, save_interval_steps
     )
     restored = manager.restore(in_step)
 
@@ -164,7 +174,23 @@ def expand_checkpoint_embeddings(
 
     # --- Save to new step ---
     print(f"[Checkpoint] Saving to step={out_step}")
-    manager.save(out_step, restored)
+    
+    # Create a new TrainState with the updated params, maintaining the original structure
+    state_new = train_state.TrainState(
+        step=out_step,
+        apply_fn=None,
+        params={"params": params_root},
+        tx=None,
+        opt_state={}  # No optimizer, ignore
+    )
+    
+    # Save using the proper checkpointing function
+    if checkpointing.save_checkpoint(manager, out_step, state_new):
+        max_logging.log(f"Saved expanded checkpoint at step {out_step}")
+        max_logging.log(f"Checkpoint saved to: {checkpoint_path}")
+    
+    # Wait until saving is complete
+    manager.wait_until_finished()
     print("[Done] Saved expanded checkpoint.")
 
 
