@@ -1,9 +1,0 @@
-{
-  "num_unused_tokens": 6242,
-  "num_additional_audio_tokens": 1950,
-  "num_padding_tokens": 98,
-  "total_audio_tokens": 8192,
-  "total_new_tokens_added": 2048,
-  "original_vocab_size": 262145,
-  "new_vocab_size": 264193
-}
