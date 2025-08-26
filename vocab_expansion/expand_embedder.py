@@ -4,7 +4,8 @@ import jax.numpy as jnp
 import jax.random
 
 from MaxText import checkpointing
-from flax.training import train_state  # only to wrap for saving as TrainState again
+from flax.training import train_state
+from orbax.checkpoint import args as ocp_args
 
 
 def _trunc_normal(key, shape, std: float, dtype):
@@ -54,12 +55,15 @@ def add_embeddings(checkpoint_path: str, num_tokens: int = 2048, out_step: int =
     new_embeddings = jnp.concatenate((embeddings, new_rows), axis=0)
     print(f"New embedding shape: {new_embeddings.shape}")
 
-    # Update the embeddings in the checkpoint
     params['token_embedder']['embedding'] = new_embeddings
 
     # Save the updated checkpoint
     print(f"Saving updated checkpoint to step {out_step}")
-    manager.save(out_step, restored)
+    new_state = train_state.TrainState(
+        step=out_step, apply_fn=None, params={"params": params}, tx=None, opt_state={}
+    )
+
+    checkpointing.save_checkpoint(manager, out_step, new_state)
     print("Checkpoint saved successfully!")
 
 
