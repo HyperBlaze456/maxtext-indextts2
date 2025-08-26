@@ -38,33 +38,53 @@ def add_embeddings(checkpoint_path: str, num_tokens: int = 2048, out_step: int =
     )
 
     restored = manager.restore(0)
-    print(type(restored))
+    print(f"Restored checkpoint type: {type(restored)}")
     items = restored['items']
-    print(items.keys())
-    params = items['params']['params']
-    print(params.keys())
+    print(f"Items keys: {items.keys()}")
+    
+    # Extract the full state, not just params
+    state = items
+    params = state['params']['params']
+    print(f"Params keys: {params.keys()}")
 
     embedder = params['token_embedder']
-    print(embedder.keys())
+    print(f"Embedder keys: {embedder.keys()}")
     embeddings = embedder['embedding']
     old_vocab_size, dim = embeddings.shape
     print(f"Original embedding shape: {embeddings.shape}")
 
+    # Generate new embeddings
     key = jax.random.PRNGKey(67)  # 67!!
     new_rows = _trunc_normal(key, (num_tokens, dim), 0.02, dtype=embeddings.dtype)
     new_embeddings = jnp.concatenate((embeddings, new_rows), axis=0)
     print(f"New embedding shape: {new_embeddings.shape}")
 
+    # Update only the embeddings in the params
     params['token_embedder']['embedding'] = new_embeddings
 
-    # Save the updated checkpoint
-    print(f"Saving updated checkpoint to step {out_step}")
-    new_state = train_state.TrainState(
-        step=out_step, apply_fn=None, params={"params": params}, tx=None, opt_state={}
+    # Reconstruct the full state, preserving all original fields
+    # Use the original state structure and just update the params
+    updated_state = train_state.TrainState(
+        step=state.get('step', out_step),  # Preserve original step if it exists
+        apply_fn=state.get('apply_fn', None),
+        params={"params": params},
+        tx=state.get('tx', None),
+        opt_state=state.get('opt_state', {})
     )
 
-    checkpointing.save_checkpoint(manager, out_step, new_state)
-    print("Checkpoint saved successfully!")
+    # Save the updated checkpoint with force flag to ensure overwriting
+    print(f"Saving updated checkpoint to step {out_step}")
+    saved = checkpointing.save_checkpoint(manager, out_step, updated_state, force=True)
+    
+    if saved:
+        print("Checkpoint save initiated successfully")
+    else:
+        print("Warning: Checkpoint save may have been skipped")
+    
+    # Wait for the save to complete
+    print("Waiting for checkpoint save to complete...")
+    manager.wait_until_finished()
+    print("Checkpoint saved and verified!")
 
 
 if __name__ == '__main__':
