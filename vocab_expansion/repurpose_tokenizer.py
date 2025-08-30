@@ -55,11 +55,14 @@ def map_audio_tokens(tokenizer_name="google/gemma-3-4b-pt", num_workers=8):
 
     print(f"Found {len(unused_token_map)} existing unused tokens")
 
+    # Sort unused tokens by their unused number for clean ordering
+    sorted_unused = sorted(unused_token_map.items(), key=lambda x: x[1])
+
     # Create audio token mapping (ignoring soft token at 262144)
     audio_token_mapping = {}
 
-    # Map existing unused tokens to audio tokens
-    for token_idx, unused_num in unused_token_map.items():
+    # Map existing unused tokens to audio tokens in order
+    for token_idx, unused_num in sorted_unused:
         if token_idx != 262144:  # Skip soft token
             audio_token_mapping[token_idx] = unused_num
 
@@ -79,15 +82,22 @@ def map_audio_tokens(tokenizer_name="google/gemma-3-4b-pt", num_workers=8):
     num_added = tokenizer.add_tokens(new_tokens)
     print(f"Successfully added {num_added} tokens")
 
-    # Map new token indices to audio IDs
+    # Map new token indices to audio IDs (in order)
     for i in range(1950):
         token_id = tokenizer.convert_tokens_to_ids(f"<unused{6242 + i}>")
         audio_token_mapping[token_id] = 6242 + i
 
-    # Padding tokens get -1 as marker
+    # Padding tokens get -1 as marker (in order)
     for i in range(98):
         token_id = tokenizer.convert_tokens_to_ids(f"<pad_audio_{i}>")
         audio_token_mapping[token_id] = -1
+
+    # Sort the final mapping by audio token ID for clean output
+    # First sort by value (audio token ID), keeping padding tokens (-1) at the end
+    audio_token_mapping = dict(sorted(
+        audio_token_mapping.items(),
+        key=lambda x: (x[1] if x[1] >= 0 else 999999, x[0])
+    ))
 
     print("\nSummary:")
     print(f"- Mapped {sum(1 for v in audio_token_mapping.values() if 0 <= v < 6242)} existing unused tokens")
