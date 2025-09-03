@@ -461,7 +461,7 @@ use_sft: False
 # sft_train_on_completion_only=False trains on both prompt and completion tokens; trains only on completion tokens otherwise
 sft_train_on_completion_only: False
 
-# dataset_type must be synthetic, hf, grain, tfds
+# dataset_type must be synthetic, hf, grain, tfds, emilia_audio
 # details in: https://github.com/google/maxtext/blob/main/getting_started/Data_Input_Pipeline.md
 dataset_type: tfds
 # for TFDS input pipeline (dataset_type=tfds)
@@ -490,6 +490,13 @@ grain_worker_count: 1
 grain_worker_count_eval: 1
 # for using pathways
 colocated_python_data_input: False  # experimental feature, under testing
+
+# for Emilia audio input pipeline (dataset_type=emilia_audio)
+# Configuration for audio token processing
+audio_token_mapping_path: "vocab_expansion/audio_token_mapping_adjusted.json"
+audio_batch_size: 32  # Batch size for audio tokenization
+emilia_language: "EN"  # Language subset: EN, ZH, DE, FR, JA, KO, or ALL
+# Note: audio_tokenizer_fn must be provided programmatically in Python code
 
 # Training loop
 steps: 150_001 # If set to -1 then will inherit value from learning_rate_schedule_steps
