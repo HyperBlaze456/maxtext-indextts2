@@ -1,0 +1,42 @@
+# Experimental config to train MaxText with the Emilia audio dataset
+base_config: ../base.yml
+
+# Core selection
+model_name: "gemma3-4b"          # Use Gemma3-4B model config as a base
+override_model_config: true       # We will override at CLI (e.g., vocab_size)
+
+# Data pipeline: use Emilia audio HF pipeline
+dataset_type: emilia_audio
+
+# Hugging Face dataset settings (fill via CLI or here)
+hf_path: ""               # e.g. "YOUR_ORG/YOUR_EMILIA_DATASET"
+hf_data_dir: ""
+hf_train_files: ""
+train_split: "train"
+hf_access_token: ""        # set if your dataset is private
+
+# Tokenizer & audio mapping (paths can be overridden at CLI)
+tokenizer_path: "assets/gemma3-audio-tokenizer"
+audio_token_mapping_path: "vocab_expansion/audio_token_mapping_complete.json"
+
+# Emilia-specific toggles
+use_precomputed_semantic: false   # set true only if dataset ships semantic token lists
+precomputed_semantic_path: ""     # e.g. "json.semantic_tokens" if use_precomputed_semantic=true
+emilia_language: "EN"
+
+# Training knobs
+packing: true
+per_device_batch_size: 4.0
+max_target_length: 2048
+steps: 100000
+learning_rate: 1.0e-4
+eval_interval: 0              # emilia_audio has no eval iterator by default
+
+# Outputs (override per run)
+run_name: "emilia_audio_gemma3_4b"
+base_output_directory: ""     # e.g. "gs://YOUR_BUCKET/maxtext"
+
+# IMPORTANT:
+# 1) Pass `vocab_size=270336` on the CLI so it is not overridden by model config.
+# 2) Override `tokenizer_path` and `audio_token_mapping_path` with absolute paths on the CLI if desired.
+
